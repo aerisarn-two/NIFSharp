@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <RootNamespace>NIFSharp</RootNamespace>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PackageId>NIFSharp</PackageId>
+    <Authors>Aerisarn</Authors>
+    <Description>Reads and writes NIF files, the Gamebryo/NetImmerse model format Bethesda's games use. Driven by nif.xml rather than generated classes, so a block is a tree of named fields and any version the schema describes can be read -- and written back byte for byte.</Description>
+    <PackageTags>nif;gamebryo;netimmerse;skyrim;bethesda;nifskope;3d</PackageTags>
+    <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryType>git</RepositoryType>
+    <RepositoryUrl>https://github.com/aerisarn-two/NIFSharp</RepositoryUrl>
+
+    <!-- Overridden by the release workflow from the tag. -->
+    <Version>0.0.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The schema is the library: without it there is nothing to drive reading.
+      Embedding it means no data file has to ship beside a consumer's build.
+    -->
+    <EmbeddedResource Include="nifxml/nif.xml" LogicalName="nif.xml" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="NIFSharp.Tests" />
+  </ItemGroup>
+
+</Project>

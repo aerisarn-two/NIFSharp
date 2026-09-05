@@ -1,0 +1,146 @@
+#
+# Builds NIFSharp, runs the tests, and publishes it as a NuGet package on
+# GitHub Packages plus a GitHub release carrying the assemblies.
+#
+# Tagging is the trigger, so build and release are one workflow: two workflows on
+# the same tag would build the same assembly twice and could publish a different
+# one from the one that was tested.
+#
+# Use workflow_dispatch to build, test and pack without publishing anything.
+#
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write   # to create the release
+      packages: write   # to publish to GitHub Packages
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Work out the version
+        id: version
+        run: |
+          set -euo pipefail
+
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF#refs/tags/v}"
+
+            # Reject a malformed tag here rather than after a full build, which
+            # is where dotnet pack would otherwise notice.
+            semver='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+            if [[ ! "$version" =~ $semver ]]; then
+              echo "tag '${GITHUB_REF#refs/tags/}' is not a version." \
+                   "Expected vMAJOR.MINOR.PATCH, optionally with a prerelease" \
+                   "suffix, e.g. v1.2.3 or v1.2.3-rc.1" >&2
+              exit 1
+            fi
+
+            publish=true
+          else
+            # Not a release: still pack, so packaging breakage shows up here
+            # rather than on the tag, but do not push it anywhere.
+            version="0.0.0-ci.${GITHUB_RUN_NUMBER}"
+            publish=false
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "version $version, publish $publish"
+
+      # Nothing here comes from GitHub Packages -- the library has no package
+      # dependencies at all -- but nuget.config names the feed, so the
+      # credentials are supplied rather than leaving restore to prompt.
+      - name: Restore
+        env:
+          GITHUB_USERNAME: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: dotnet restore
+
+      - name: Build
+        run: >
+          dotnet build --no-restore -c Release
+          -p:Version=${{ steps.version.outputs.version }}
+          -p:RepositoryUrl=https://github.com/${{ github.repository }}
+
+      #
+      # Everything runs here: the fixtures are committed, so there is no game
+      # data to find and nothing is skipped on a runner. The round trip asserts
+      # bytes, which is the only check that means anything for a file format.
+      #
+      - name: Test
+        run: dotnet test --no-build -c Release --verbosity normal
+
+      - name: Pack
+        run: >
+          dotnet pack src/NIFSharp/NIFSharp.csproj --no-build -c Release
+          -p:Version=${{ steps.version.outputs.version }}
+          -p:RepositoryUrl=https://github.com/${{ github.repository }}
+          -o artifacts
+
+      # Fail here rather than at the release step, where an empty upload would
+      # be reported as an unmatched glob and take longer to read.
+      - name: Check the artifacts
+        run: |
+          set -euo pipefail
+          ls -l src/NIFSharp/bin/Release/net9.0/NIFSharp.dll
+          ls -l artifacts/*.nupkg
+          test "$(ls artifacts/*.nupkg | wc -l)" -eq 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NIFSharp-${{ steps.version.outputs.version }}
+          path: |
+            src/NIFSharp/bin/Release/net9.0/NIFSharp.dll
+            artifacts/*.nupkg
+          if-no-files-found: error
+
+      #
+      # GITHUB_TOKEN is enough for GitHub Packages, so there is no secret to
+      # configure. Consumers need a nuget.config pointing at this feed and a PAT
+      # with read:packages -- see README.md.
+      #
+      - name: Publish to GitHub Packages
+        if: steps.version.outputs.publish == 'true'
+        run: >
+          dotnet nuget push artifacts/*.nupkg
+          --source https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
+          --api-key ${{ secrets.GITHUB_TOKEN }}
+          --skip-duplicate
+
+      #
+      # Created after the package push, so a failed push never leaves a release
+      # advertising a version that is not on the feed. Carries the same
+      # assemblies the tests ran against and the same .nupkg that was published.
+      #
+      - name: Create the GitHub release
+        if: steps.version.outputs.publish == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: NIFSharp ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          fail_on_unmatched_files: true
+          files: |
+            src/NIFSharp/bin/Release/net9.0/NIFSharp.dll
+            artifacts/*.nupkg

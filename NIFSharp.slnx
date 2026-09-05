@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/NIFSharp/NIFSharp.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/NIFSharp.Tests/NIFSharp.Tests.csproj" />
+  </Folder>
+</Solution>
