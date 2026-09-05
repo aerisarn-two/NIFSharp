@@ -273,7 +273,12 @@ namespace NIFSharp
     /// Conversions for the half-precision and normalised-byte encodings that the
     /// Bethesda vertex formats use.
     /// </summary>
-    internal static class NifPack
+    /// <remarks>
+    /// Public because reading vertex data means decoding these, and a caller
+    /// comparing two files field by field needs the same conversions the reader
+    /// used rather than an approximation of them.
+    /// </remarks>
+    public static class NifPack
     {
         /// <summary>
         /// Decodes a 16-bit half into a float.
