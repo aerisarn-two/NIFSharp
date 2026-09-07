@@ -218,8 +218,69 @@ namespace NIFSharp
 
         public void SetFloat(float value)
         {
-            _num = BitConverter.SingleToUInt32Bits(value);
+            _num = BitConverter.SingleToUInt32Bits(Type switch
+            {
+                NifValueType.Hfloat => NifPack.HalfToFloat(NifPack.FloatToHalf(value)),
+                NifValueType.Normbyte => NifPack.ByteToSNorm(NifPack.SNormToByte(value)),
+                _ => value
+            });
         }
+
+        /// <summary>
+        /// Narrows a value to what this field's storage can actually hold.
+        /// </summary>
+        /// <remarks>
+        /// Most types store what they are given, but a handful do not: a normal is
+        /// three bytes, a particle vertex is three halves, a vertex colour is four
+        /// bytes. Holding the full-precision float until the write narrowed it made
+        /// the model say one thing and the file another -- a value set and read back
+        /// without ever leaving memory came out different from the same value put
+        /// through a save and a load, and any comparison in between was measuring a
+        /// number the format cannot store.
+        ///
+        /// So the narrowing happens here, on the way in, and mirrors
+        /// <c>NifOStream.WriteValue</c> case for case. A field then holds exactly what
+        /// a write followed by a read would give back, which is what every reader of
+        /// the model already assumed it held.
+        /// </remarks>
+        private readonly object Narrowed<T>(T value) where T : notnull => Type switch
+        {
+            NifValueType.Hfloat or NifValueType.Normbyte when value is float f
+                => Type == NifValueType.Hfloat
+                    ? NifPack.HalfToFloat(NifPack.FloatToHalf(f))
+                    : NifPack.ByteToSNorm(NifPack.SNormToByte(f)),
+
+            NifValueType.ByteVector3 when value is NifVector3 v
+                => new NifVector3(
+                    NifPack.ByteToSNorm(NifPack.SNormToByte(v.X)),
+                    NifPack.ByteToSNorm(NifPack.SNormToByte(v.Y)),
+                    NifPack.ByteToSNorm(NifPack.SNormToByte(v.Z))),
+
+            NifValueType.HalfVector3 when value is NifVector3 v
+                => new NifVector3(
+                    NifPack.HalfToFloat(NifPack.FloatToHalf(v.X)),
+                    NifPack.HalfToFloat(NifPack.FloatToHalf(v.Y)),
+                    NifPack.HalfToFloat(NifPack.FloatToHalf(v.Z))),
+
+            NifValueType.UshortVector3 when value is NifVector3 v
+                => new NifVector3(
+                    (ushort)MathF.Round(v.X),
+                    (ushort)MathF.Round(v.Y),
+                    (ushort)MathF.Round(v.Z)),
+
+            NifValueType.HalfVector2 when value is NifVector2 v
+                => new NifVector2(
+                    NifPack.HalfToFloat(NifPack.FloatToHalf(v.X)),
+                    NifPack.HalfToFloat(NifPack.FloatToHalf(v.Y))),
+
+            NifValueType.ByteColor4 when value is NifColor4 c
+                => new NifColor4(ColorByte(c.R), ColorByte(c.G), ColorByte(c.B), ColorByte(c.A)),
+
+            _ => value
+        };
+
+        private static float ColorByte(float value) =>
+            (byte)Math.Clamp(MathF.Round(value * 255f), 0f, 255f) / 255f;
 
         public void SetLink(int value)
         {
@@ -236,7 +297,7 @@ namespace NIFSharp
 
         public void Set<T>(T value) where T : notnull
         {
-            _obj = value;
+            _obj = Narrowed(value);
         }
 
         public readonly string AsString() => _obj as string ?? string.Empty;
