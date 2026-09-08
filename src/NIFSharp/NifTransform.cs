@@ -28,16 +28,34 @@ namespace NIFSharp
             return FromMatrix(combined);
         }
 
-        /// <summary>The transform as a row-vector matrix, matching NIF's convention.</summary>
+        /// <summary>The transform as a row-vector matrix.</summary>
+        /// <remarks>
+        /// Transposed on the way in. A NIF stores its rotation for column vectors --
+        /// it means `R * v`, not `v * R` -- and System.Numerics applies a matrix to a
+        /// row vector, so copying the nine numbers across unchanged applies every
+        /// rotation backwards.
+        ///
+        /// It cost a day to see, because a converter that reads and writes with the
+        /// same mistake round trips perfectly: the error is only visible against
+        /// something that did not make it. Three things say so at once on
+        /// lumbermill01waterwheel01. Its axle, `L1_SawWaterWheelHub`, lands at
+        /// y[-264, -248] with the rotation applied this way round and at y[-8, 8] --
+        /// through the middle of the wheel, where an axle goes -- with it the other.
+        /// Its ragdoll rod coincides with the collision capsule that stands for it,
+        /// which is two independent paths agreeing. And a skin's own arithmetic closes:
+        /// `SkinTransform` composed with where a bone stands has to be one matrix for
+        /// the whole skin, and across dlc1sabrecat's fifty-nine bones it disagreed by
+        /// 227 units before and by nothing at all after.
+        /// </remarks>
         public Matrix4x4 ToMatrix()
         {
             NifMatrix33 r = Rotation;
             float s = Scale;
 
             return new Matrix4x4(
-                r.M11 * s, r.M12 * s, r.M13 * s, 0f,
-                r.M21 * s, r.M22 * s, r.M23 * s, 0f,
-                r.M31 * s, r.M32 * s, r.M33 * s, 0f,
+                r.M11 * s, r.M21 * s, r.M31 * s, 0f,
+                r.M12 * s, r.M22 * s, r.M32 * s, 0f,
+                r.M13 * s, r.M23 * s, r.M33 * s, 0f,
                 Translation.X, Translation.Y, Translation.Z, 1f);
         }
 
@@ -60,11 +78,12 @@ namespace NIFSharp
             if (sy > 0) y /= sy;
             if (sz > 0) z /= sz;
 
+            // Transposed back, as ToMatrix transposed on the way in.
             var rotation = new NifMatrix33
             {
-                M11 = x.X, M12 = x.Y, M13 = x.Z,
-                M21 = y.X, M22 = y.Y, M23 = y.Z,
-                M31 = z.X, M32 = z.Y, M33 = z.Z
+                M11 = x.X, M21 = x.Y, M31 = x.Z,
+                M12 = y.X, M22 = y.Y, M32 = y.Z,
+                M13 = z.X, M23 = z.Y, M33 = z.Z
             };
 
             return new NifTransform(new NifVector3(m.M41, m.M42, m.M43), rotation, scale);
@@ -77,9 +96,9 @@ namespace NIFSharp
             float s = Scale;
 
             return new NifVector3(
-                (point.X * r.M11 + point.Y * r.M21 + point.Z * r.M31) * s + Translation.X,
-                (point.X * r.M12 + point.Y * r.M22 + point.Z * r.M32) * s + Translation.Y,
-                (point.X * r.M13 + point.Y * r.M23 + point.Z * r.M33) * s + Translation.Z);
+                (r.M11 * point.X + r.M12 * point.Y + r.M13 * point.Z) * s + Translation.X,
+                (r.M21 * point.X + r.M22 * point.Y + r.M23 * point.Z) * s + Translation.Y,
+                (r.M31 * point.X + r.M32 * point.Y + r.M33 * point.Z) * s + Translation.Z);
         }
 
         /// <summary>Applies only the rotation, for normals and other directions.</summary>
@@ -88,15 +107,26 @@ namespace NIFSharp
             NifMatrix33 r = Rotation;
 
             return new NifVector3(
-                direction.X * r.M11 + direction.Y * r.M21 + direction.Z * r.M31,
-                direction.X * r.M12 + direction.Y * r.M22 + direction.Z * r.M32,
-                direction.X * r.M13 + direction.Y * r.M23 + direction.Z * r.M33);
+                r.M11 * direction.X + r.M12 * direction.Y + r.M13 * direction.Z,
+                r.M21 * direction.X + r.M22 * direction.Y + r.M23 * direction.Z,
+                r.M31 * direction.X + r.M32 * direction.Y + r.M33 * direction.Z);
         }
 
         /// <summary>The rotation as a quaternion.</summary>
         public NifQuat ToQuaternion()
         {
-            NifMatrix33 m = Rotation;
+            // Read in the form the file stores, as RotationFromQuaternion writes it:
+            // the off-diagonal differences are the other way round from the row-vector
+            // reading, and taking them the wrong way conjugates every quaternion.
+            NifMatrix33 r = Rotation;
+
+            var m = new NifMatrix33
+            {
+                M11 = r.M11, M12 = r.M21, M13 = r.M31,
+                M21 = r.M12, M22 = r.M22, M23 = r.M32,
+                M31 = r.M13, M32 = r.M23, M33 = r.M33,
+            };
+
             float trace = m.M11 + m.M22 + m.M33;
             float w, x, y, z;
 
@@ -146,10 +176,17 @@ namespace NIFSharp
         /// </remarks>
         public NifVector3 ToEulerDegrees()
         {
-            NifMatrix33 m = Rotation;
+            // Transposed into the row form the extraction below is written for; the
+            // file stores the column form. See ToMatrix.
+            NifMatrix33 r = Rotation;
 
-            // Rz * Ry * Rx applied to a row vector, which is what EulOrdXYZs means
-            // once NIF's row-major storage is accounted for.
+            var m = new NifMatrix33
+            {
+                M11 = r.M11, M12 = r.M21, M13 = r.M31,
+                M21 = r.M12, M22 = r.M22, M23 = r.M32,
+                M31 = r.M13, M32 = r.M23, M33 = r.M33,
+            };
+
             float sy = -m.M13;
             float x, y, z;
 
@@ -173,8 +210,8 @@ namespace NIFSharp
 
         /// <summary>Builds a rotation matrix from a quaternion.</summary>
         /// <remarks>
-        /// The transpose of the usual column-vector form, because NIF applies its
-        /// matrices to row vectors. Getting this backwards mirrors every rotation.
+        /// The usual column-vector form, which is how a NIF stores a rotation; see
+        /// ToMatrix. Getting this backwards mirrors every rotation.
         /// </remarks>
         public static NifMatrix33 RotationFromQuaternion(NifQuat q)
         {
@@ -183,13 +220,13 @@ namespace NIFSharp
             return new NifMatrix33
             {
                 M11 = 1f - 2f * (y * y + z * z),
-                M12 = 2f * (x * y + z * w),
-                M13 = 2f * (x * z - y * w),
-                M21 = 2f * (x * y - z * w),
+                M21 = 2f * (x * y + z * w),
+                M31 = 2f * (x * z - y * w),
+                M12 = 2f * (x * y - z * w),
                 M22 = 1f - 2f * (x * x + z * z),
-                M23 = 2f * (y * z + x * w),
-                M31 = 2f * (x * z + y * w),
-                M32 = 2f * (y * z - x * w),
+                M32 = 2f * (y * z + x * w),
+                M13 = 2f * (x * z + y * w),
+                M23 = 2f * (y * z - x * w),
                 M33 = 1f - 2f * (x * x + y * y)
             };
         }
@@ -203,16 +240,18 @@ namespace NIFSharp
             float cy = MathF.Cos(y * ToRadians), sy = MathF.Sin(y * ToRadians);
             float cz = MathF.Cos(z * ToRadians), sz = MathF.Sin(z * ToRadians);
 
+            // Built as the row form and stored transposed, which is the form the file
+            // keeps. The inverse of ToEulerDegrees.
             return new NifMatrix33
             {
                 M11 = cy * cz,
-                M12 = cy * sz,
-                M13 = -sy,
-                M21 = sx * sy * cz - cx * sz,
+                M21 = cy * sz,
+                M31 = -sy,
+                M12 = sx * sy * cz - cx * sz,
                 M22 = sx * sy * sz + cx * cz,
-                M23 = sx * cy,
-                M31 = cx * sy * cz + sx * sz,
-                M32 = cx * sy * sz - sx * cz,
+                M32 = sx * cy,
+                M13 = cx * sy * cz + sx * sz,
+                M23 = cx * sy * sz - sx * cz,
                 M33 = cx * cy
             };
         }
