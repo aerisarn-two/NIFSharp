@@ -49,6 +49,49 @@ namespace NIFSharp.Tests
             return model;
         }
 
+        /// <summary>
+        /// A block edited after the header was measured is still written at the size the
+        /// header states.
+        /// </summary>
+        /// <remarks>
+        /// The game reads a block and checks it consumed exactly the bytes the header
+        /// promised. A texture path rewritten to where the texture now is -- sixteen bytes
+        /// longer -- left the header saying 116 for a block that wrote 132, and the file
+        /// loaded in every viewer and was refused by the game and the Creation Kit with
+        /// "stream size mismatch". Saving measures the header, so no caller has to know.
+        /// </remarks>
+        [Fact]
+        public void ABlockEditedAfterMeasuringIsStillTheSizeTheHeaderSays()
+        {
+            // A texture set, because its paths are written into the block itself rather than
+            // pooled in the header the way a node's name is.
+            const string Short = @"textures\short.dds";
+            const string Where = @"textures\actors\housecat\catsimple_albedo_5.dds";
+
+            NifModel model = Build(out NifItem set, "BSShaderTextureSet");
+            model.SetRoots([model.Blocks[0]]);
+            model.SetArraySize(set, "Num Textures", "Textures", 2);
+            NifItem textures = model.FindItem(set, "Textures")!;
+            textures.Children[0].Value.Set(Short);
+            model.UpdateHeader();
+
+            int[] measured = [.. model.FindItem(model.Header, "Block Size")!.Children.Select(c => (int)c.Value.ToUInt())];
+
+            // The edit the header knows nothing about: the path the texture ended up at.
+            textures.Children[0].Value.Set(Where);
+
+            using var stream = new MemoryStream();
+            model.Save(stream);
+            stream.Position = 0;
+
+            NifModel back = NifModel.Load(stream, Db);
+            int[] declared = [.. back.FindItem(back.Header, "Block Size")!.Children.Select(c => (int)c.Value.ToUInt())];
+
+            Assert.Equal(measured[1] + (Where.Length - Short.Length), declared[1]);
+            Assert.Equal("tail", back.GetName(back.Blocks[2]));
+            Assert.Equal(Where, back.FindItem(back.Blocks[1], "Textures")!.Children[0].Value.Get<string>());
+        }
+
         [Fact]
         public void CountWithoutElementsIsStillWrittenInFull()
         {

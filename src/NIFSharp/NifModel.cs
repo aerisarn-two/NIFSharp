@@ -1059,8 +1059,19 @@ namespace NIFSharp
         // --- saving -----------------------------------------------------------
 
         /// <summary>Writes the model back out.</summary>
+        /// <remarks>
+        /// The header is brought up to date first. What it states about the blocks -- how many
+        /// there are, what types they have, how long each one is -- is derived from the tree
+        /// and not anybody's data, and a reader checks it: the game reads a block and then
+        /// checks it consumed exactly the bytes the header promised, so a size measured before
+        /// the last edit is a file it refuses with "stream size mismatch". A caller that edits
+        /// and saves cannot be expected to know that, and forgetting it produces a file most
+        /// viewers still open.
+        /// </remarks>
         public void Save(Stream stream)
         {
+            UpdateHeader();
+
             var output = new NifOStream(this, stream)
             {
                 HeaderString = FindItem(_header, "Header String")?.Value.AsString() ?? string.Empty
